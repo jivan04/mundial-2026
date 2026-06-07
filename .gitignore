@@ -10,3 +10,4 @@ dist/
 
 # Base de datos local
 *.db
+backend/venv/
