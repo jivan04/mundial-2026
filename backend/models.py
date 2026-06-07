@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
 from database import Base
 
 
@@ -9,7 +10,7 @@ class Usuario(Base):
     nombre = Column(String(100), unique=True, nullable=False)
     contraseña = Column(String, nullable=False)
     puntos = Column(Integer, default=0)
-
+    aprobado = Column(Boolean, default=False)
 
 class Partido(Base):
     __tablename__ = "partidos"

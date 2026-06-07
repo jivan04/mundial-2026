@@ -59,7 +59,7 @@ Base.metadata.create_all(bind=engine)
 
 @app.get("/")
 def inicio():
-    return {"mensaje": "Sistema Mundial 2026 funcionando ⚽"}
+    return {"mensaje": "MUNDIAL DE FÚTBOL 2026⚽"}
 
 
 # ══════════════════════════════════════════════
@@ -82,11 +82,29 @@ def crear_usuario(usuario: UsuarioCrear, db: Session = Depends(obtener_db)):
 
 @app.post("/login")
 def login(usuario: UsuarioLogin, db: Session = Depends(obtener_db)):
-    usuario_db = db.query(Usuario).filter(Usuario.nombre == usuario.nombre).first()
+    usuario_db = db.query(Usuario).filter(
+        Usuario.nombre == usuario.nombre
+    ).first()
+
     if not usuario_db:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(
+            status_code=404,
+            detail="Usuario no encontrado"
+        )
+
     if usuario_db.contraseña != usuario.contraseña:
-        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+        raise HTTPException(
+            status_code=401,
+            detail="Contraseña incorrecta"
+        )
+
+    # Verificar aprobación
+    if not usuario_db.aprobado:
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta está pendiente de aprobación"
+        )
+
     return {
         "mensaje": "Login exitoso",
         "usuario": usuario_db.nombre,
@@ -101,36 +119,55 @@ def login(usuario: UsuarioLogin, db: Session = Depends(obtener_db)):
 
 @app.post("/predicciones", status_code=status.HTTP_201_CREATED)
 def crear_prediccion(prediccion: PrediccionCrear, db: Session = Depends(obtener_db)):
+
+    print("Datos recibidos:", prediccion)
+
+    # 1. Validar que el usuario exista
     if not db.query(Usuario).filter(Usuario.id == prediccion.usuario_id).first():
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    # 2. Validar que el partido exista
     partido = db.query(Partido).filter(Partido.id == prediccion.partido_id).first()
     if not partido:
         raise HTTPException(status_code=404, detail="Partido no encontrado")
 
-    # Descomenta las siguientes líneas para bloquear predicciones
-    # en partidos que ya comenzaron:
-    # if datetime.now(timezone.utc) >= partido.fecha_partido:
-    #     raise HTTPException(status_code=400, detail="Las predicciones para este partido ya cerraron")
-
-    if db.query(Prediccion).filter(
+    # 3. Validar si ya existe una predicción previa
+    existente = db.query(Prediccion).filter(
         Prediccion.usuario_id == prediccion.usuario_id,
         Prediccion.partido_id == prediccion.partido_id,
-    ).first():
-        raise HTTPException(status_code=400, detail="Ya realizaste una predicción para este partido")
+    ).first()
 
+    if existente:
+        raise HTTPException(
+            status_code=400,
+            detail="Ya realizaste una predicción para este partido"
+        )
+
+    # 4. Validar el formato del resultado
     if prediccion.resultado_predicho not in RESULTADOS_VALIDOS:
-        raise HTTPException(status_code=400, detail="Resultado inválido")
+        raise HTTPException(
+            status_code=400,
+            detail="Resultado inválido"
+        )
 
-    nueva = Prediccion(
+    # 🛠️ LA SOLUCIÓN: Crear el objeto de la base de datos y guardarlo de verdad
+    nueva_prediccion = Prediccion(
         usuario_id=prediccion.usuario_id,
         partido_id=prediccion.partido_id,
         resultado_predicho=prediccion.resultado_predicho,
+        puntos_obtenidos=0  # Se inicializa en 0 hasta que corra /calcular-puntos
     )
-    db.add(nueva)
+    
+    db.add(nueva_prediccion)
     db.commit()
-    db.refresh(nueva)
-    return {"mensaje": "Predicción guardada correctamente"}
+    db.refresh(nueva_prediccion)
+
+    return {
+        "status": "success",
+        "mensaje": "Predicción guardada correctamente",
+        "prediccion_id": nueva_prediccion.id
+    }
+
 
 
 # ══════════════════════════════════════════════
@@ -424,3 +461,46 @@ def actualizar_resultados_desde_api(db: Session = Depends(obtener_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
+    
+@app.get("/aprobar/{usuario_id}")
+def aprobar_usuario(usuario_id: int, db: Session = Depends(obtener_db)):
+    usuario = db.query(Usuario).filter(
+        Usuario.id == usuario_id
+    ).first()
+
+    if not usuario:
+        raise HTTPException(
+            status_code=404,
+            detail="Usuario no encontrado"
+        )
+
+    usuario.aprobado = True
+    db.commit()
+
+    return {
+        "mensaje": f"Usuario {usuario.nombre} aprobado correctamente"
+    }
+    
+@app.get("/usuarios-pendientes")
+def usuarios_pendientes(db: Session = Depends(obtener_db)):
+    usuarios = db.query(Usuario).filter(
+        Usuario.aprobado == False
+    ).all()
+
+    return usuarios
+
+
+@app.get("/predicciones/{usuario_id}")
+def obtener_predicciones(usuario_id: int, db: Session = Depends(obtener_db)):
+    predicciones = (
+        db.query(Prediccion)
+        .filter(Prediccion.usuario_id == usuario_id)
+        .all()
+    )
+
+    return {
+        p.partido_id: p.resultado_predicho
+        for p in predicciones
+    }
+    
+    
